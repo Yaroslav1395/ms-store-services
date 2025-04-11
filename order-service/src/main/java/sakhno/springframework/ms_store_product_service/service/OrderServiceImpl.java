@@ -1,10 +1,12 @@
 package sakhno.springframework.ms_store_product_service.service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.core.publisher.Mono;
 import sakhno.springframework.ms_store_product_service.dto.InventoryResponse;
 import sakhno.springframework.ms_store_product_service.dto.OrderLineItemDto;
 import sakhno.springframework.ms_store_product_service.dto.OrderRequestDto;
@@ -17,12 +19,14 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class OrderServiceImpl {
     private final OrderRepository orderRepository;
     private final WebClient.Builder webClientBuilder;
 
     @Transactional
-    public void placeOrder(OrderRequestDto orderRequestDto) {
+    public String placeOrder(OrderRequestDto orderRequestDto) {
+        log.info("Place Order");
         OrderEntity orderEntity = new OrderEntity();
         orderEntity.setOrderNumber(UUID.randomUUID().toString());
         List<OrderLineItemEntity> orderLineItemsDto = orderRequestDto.getOrderLineItems().stream()
@@ -39,7 +43,7 @@ public class OrderServiceImpl {
                 .get()
                 .uri("http://MS-STORE-INVENTORY-SERVICE/api/v1/inventory",
                         uriBuilder -> uriBuilder
-                                .queryParam("skuCode", skuCodes)
+                                .queryParam("sku_code", skuCodes)
                                 .build())
                 .retrieve()
                 .bodyToMono(new ParameterizedTypeReference<List<InventoryResponse>>() {})
@@ -47,6 +51,7 @@ public class OrderServiceImpl {
         boolean allProductsInStock = result.stream().allMatch(InventoryResponse::isInStock);
         if(Boolean.TRUE.equals(allProductsInStock)) {
             orderRepository.save(orderEntity);
+            return "Order Placed Successfully";
         } else {
             throw new IllegalArgumentException("Product is not in stock, please try again later");
         }

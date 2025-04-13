@@ -1,6 +1,46 @@
 ---
 version: '3.7'
 services:
+  ## Mongo Docker Compose Config
+  mongo:
+    container_name: mongo
+    image: mongo:4.4.14-rc0-focal
+    restart: always
+    ports:
+      - "27017:27017"
+    expose:
+      - "27017"
+    volumes:
+      - ./mongo-data:/data/db
+  ## Keycloak Config with Mysql database
+  keycloak-mysql:
+    container_name: keycloak-mysql
+    image: mysql:5.7
+    volumes:
+      - ./mysql_keycloak_data:/var/lib/mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: keycloak
+      MYSQL_USER: keycloak
+      MYSQL_PASSWORD: password
+  keycloak:
+    container_name: keycloak
+    image: quay.io/keycloak/keycloak:18.0.0
+    command: [ "start-dev", "--import-realm" ]
+    environment:
+      DB_VENDOR: MYSQL
+      DB_ADDR: mysql
+      DB_DATABASE: keycloak
+      DB_USER: keycloak
+      DB_PASSWORD: password
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./realms/:/opt/keycloak/data/import/
+    depends_on:
+      - keycloak-mysql
   zookeeper:
     image: confluentinc/cp-zookeeper:7.0.1
     container_name: zookeeper
@@ -9,7 +49,6 @@ services:
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
       ZOOKEEPER_TICK_TIME: 2000
-
   broker:
     image: confluentinc/cp-kafka:7.0.1
     container_name: broker
@@ -25,3 +64,103 @@ services:
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
       KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+  ## Zipkin
+  zipkin:
+    image: openzipkin/zipkin
+    container_name: zipkin
+    ports:
+      - "9411:9411"
+  ## Eureka Server
+  eureka:
+    image: isakhno13/eureka:latest
+    container_name: eureka
+    ports:
+      - "8761:8761"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - zipkin
+  gateway:
+    image: isakhno13/gateway:latest
+    container_name: gateway
+    ports:
+      - "9090:9090"
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - LOGGING_LEVEL_ORG_SPRINGFRAMEWORK_SECURITY= TRACE
+    depends_on:
+      - zipkin
+      - eureka
+      - keycloak
+  ## Product-Service Docker Compose Config
+  product-service:
+    container_name: product-service
+    image: isakhno13/product-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - mongo
+      - eureka
+      - gateway
+  ## Order-Service Docker Compose Config
+  order-service:
+    container_name: order-service
+    image: isakhno13/order-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_REACTOR_DEBUG-AGENT_ENABLED=false
+    depends_on:
+      - broker
+      - zipkin
+      - eureka
+      - gateway
+  ## Inventory-Service Docker Compose Config
+  inventory-service:
+    container_name: inventory-service
+    image: isakhno13/inventory-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+      - SPRING_REACTOR_DEBUG-AGENT_ENABLED=false
+    depends_on:
+      - zipkin
+      - eureka
+      - gateway
+  ## Notification-Service Docker Compose Config
+  notification-service:
+    container_name: notification-service
+    image: isakhno13/notification-service:latest
+    environment:
+      - SPRING_PROFILES_ACTIVE=docker
+    depends_on:
+      - zipkin
+      - broker
+      - eureka
+      - gateway
+  ## Prometheus
+  prometheus:
+    image: prom/prometheus:v2.37.1
+    container_name: prometheus
+    restart: always
+    ports:
+      - "9091:9091"
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml
+    depends_on:
+      - product-service
+      - inventory-service
+      - order-service
+      - notification-service
+
+  grafana:
+    image: grafana/grafana-oss:8.5.2
+    container_name: grafana
+    restart: always
+    ports:
+      - "3000:3000"
+    links:
+      - prometheus:prometheus
+    volumes:
+      - ./grafana:/var/lib/grafana
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=password
